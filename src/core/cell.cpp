@@ -58,7 +58,7 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.              #
 #                                                                           #
 #############################################################################
-*/
+ */
 
 #include "cell.h"
 #include "cell_cycle_classic.h"
@@ -71,6 +71,7 @@
 #include<math.h>
 #include <random>
 #include <unordered_map>
+
 
 Cell::Cell() : Basic_Agent()
 {
@@ -172,7 +173,7 @@ void Cell::divide()
 	Cell* kid = NULL;
 	division_flagged = 0;
 
-	#pragma omp critical
+#pragma omp critical
 	{ kid = cell_container()->create_cell(); }
 	kid->copy_cell( this );
 	volume.noise_target( cell_line->get_init_radius(), cell_line->get_default_volume(2), cell_line->get_default_volume(3) );
@@ -185,11 +186,11 @@ void Cell::divide()
 	if (! kid->assign_position( position - 0.05 * radius * polarization.dir() ) )
 	{
 		std::cout << "Could not assign position to daughter cell" << std::endl;
-		#pragma omp critical
+#pragma omp critical
 		{cell_container()->delete_cell( kid->index );}
 		return;
 	}
-	
+
 	//change my position to keep the center of mass intact and then see if I need to update my voxel index
 	position += 0.05 * radius * polarization.dir();
 	update_voxel_in_container();
@@ -212,7 +213,71 @@ void Cell::update_polarization( double dt )
 	// p(n+1) = (p(n)+dt*v(n)) / (1+dt/tau)
 	polarization += dt * velocity;
 	polarization /= (1 + dt/cell_line->persistence);
+
+
+	// TODO Add condition from cell_line whether or not the cell respond to gradient of chemokine
+	// bias polarization in the direction of the gradient
+	chemotaxis_bias_function(dt);
+
 }
+
+
+
+
+void Cell::chemotaxis_bias_function( double dt )
+{
+
+	// First compute the direction of the chemotaxis component
+
+	std::vector<double> gradient;
+
+	int chemIndex = microenvironment->get_index("chemokine");
+	gradient = microenvironment->gradient_vector(get_current_voxel_index())[chemIndex];
+	chemo_motility.set(gradient[0], gradient[1], gradient[2]);
+	//delete(gradient);
+
+
+	// Normalise the gradient vector
+	chemo_motility.normalize();
+
+
+
+	// Update polarisation coef based on alignment of current velocity with direction of chemokine gradient
+
+	if(polarization.norm() > EPSILON){
+		double dp = polarization.dir() * chemo_motility.dir();
+		if(!(dp != dp)){ // NaN check
+			polarized = ( 1 + dp ) / 2 ;
+			if(polarized > 1){ polarized = 1;}
+			else if(polarized <= 0){ polarized = 0.0001;}
+			pmotility = polarized;
+		}
+	}else{
+		polarized = 0.5;
+		pmotility = 0.1;
+	}
+
+
+	// Scale the chemotaxis vector to the same magnitude as polarization
+	chemo_motility *= polarization.norm();
+
+	// update polarization
+	if(chemo_motility.norm() > EPSILON){
+		polarization += chemo_motility;
+		polarization.normalize();
+	}
+
+
+
+
+
+
+	//printf("chemo_motility set to %f, %f, %f", gradient[0], gradient[1], gradient[2]);
+
+	return;
+}
+
+
 
 /* Assign cell line */
 void Cell::set_cell_line( CellLine* cl) 
@@ -256,7 +321,7 @@ void Cell::init_env_rates()
 	saturation_densities.resize( ndens );
 	for ( int i = 0; i < ndens; i++ )
 	{
-		secretion_rates[i] = 0.0;
+		secretion_rates[i] = cell_line->secretion/microvoxel_volume();
 		uptake_rates[i] = cell_line->init_uptake_rate;
 		saturation_densities[i] = 50.0;
 	}
@@ -264,6 +329,8 @@ void Cell::init_env_rates()
 	if ( index >= 0 )
 	{
 		uptake_rates[index] = 10000*cell_line->init_uptake_rate;
+		// set oxygen secretion rate back to zero
+		secretion_rates[index] = 0.0;
 	}
 	index = density_index("tnf");
 	if ( index >= 0 )	
@@ -309,7 +376,7 @@ void Cell::secrete(std::string field, double fact, double dt)
 void Cell::turn_off_reactions(double dt)
 {	
 	// is_active=false;  /* uncomment this line if you want to completely turn off all the reactions*/
-	
+
 	// Reduce all the uptake and secretion rates by a factor of 10
 	for( int i = 0; i < (int) uptake_rates.size(); i++ )
 		uptake_rates[i] = 0.0;  
@@ -325,16 +392,16 @@ void Cell::die()
 
 double Cell::oxygen_necrosis()
 {
-   double ox = local_density("oxygen");	
-   if ( ox == -1 ) return -1;
-   return cell_line->necrosis_rate_O2( ox ); 
+	double ox = local_density("oxygen");
+	if ( ox == -1 ) return -1;
+	return cell_line->necrosis_rate_O2( ox );
 }
 
 double Cell::oxygen_prolif()
 { 
-   double ox = local_density("oxygen");	
-   // oxygen density absent, do as if unlimited concentration
-   if ( ox == -1 ) 
+	double ox = local_density("oxygen");
+	// oxygen density absent, do as if unlimited concentration
+	if ( ox == -1 )
 		return cell_line->proliferation_O2_based(INT_MAX); 
 	return cell_line->proliferation_O2_based(ox); 
 }
@@ -375,15 +442,15 @@ void Cell::set_motility( double dt )
 		return;
 	switch( cell_line->mode_motility )
 	{
-		case 0:
-			set_3D_random_motility(dt);
-			break;
-		case 1:
-			set_3D_polarized_motility(dt);
-			break;
-		default:
-			return;
-			break;
+	case 0:
+		set_3D_random_motility(dt);
+		break;
+	case 1:
+		set_3D_polarized_motility(dt);
+		break;
+	default:
+		return;
+		break;
 	}
 	velocity += motility;
 }
@@ -392,12 +459,12 @@ void Cell::update_volume( double dt )
 { 
 	switch( cell_line->mode_volume )
 	{
-		case 0:
-			update_volume_default(dt);
-			break;
-		default:
-			return;
-			break;
+	case 0:
+		update_volume_default(dt);
+		break;
+	default:
+		return;
+		break;
 	}
 }
 
@@ -405,7 +472,7 @@ void Cell::add_cell_basement_membrane_interactions( double dt, double distance )
 {
 	//Note that the distance_to_membrane function must set displacement values (as a normal vector)
 	double max_interactive_distance = cell_line->max_interaction_distance_factor * volume.get_radius();
-		
+
 	double temp_a=0;
 	// Adhesion to basement membrane
 	if(distance< max_interactive_distance)
@@ -431,9 +498,9 @@ void Cell::add_cell_basement_membrane_interactions( double dt, double distance )
 }
 
 /* Update the value of freezing of the cell with bitwise operation
-* Do a bitwise-or comparison on freezed and input parameter:
-* if freezed = 0, it will be the value of the parameter frozen
-* if freezed = 1, it will be either 1 (frozen = 0) or 3 (frozen = 3) */
+ * Do a bitwise-or comparison on freezed and input parameter:
+ * if freezed = 0, it will be the value of the parameter frozen
+ * if freezed = 1, it will be either 1 (frozen = 0) or 3 (frozen = 3) */
 void Cell::freezer( int frozen )
 {
 	freezed = freezed | frozen;
@@ -460,7 +527,7 @@ double Cell::get_repulsion()
 {
 	return cell_line->Cccr; 
 }
-		
+
 double Cell::max_interaction() 
 { 
 	return cell_line->max_interaction_distance_factor * volume.get_radius(); 
@@ -503,7 +570,7 @@ bool Cell::not_enough_oxygen()
 	double ox = local_density("oxygen");
 	if ( ox >= 0 )	
 		return ( UniformRandom()/2.0 < (cell_line->o2_no_proliferation - ox)) ;
-   return false;	
+	return false;
 }
 
 /* Return if level of protein given by index around the cell is high enough (compared to given threshold) */
@@ -524,7 +591,7 @@ bool Cell::has_neighbor(int level)
 	else
 		return contact_cell() > (2 * cell_line->contact_cc_threshold); 
 }
-		
+
 /* Return if cell has enough contact with ECM (compared to given threshold) */	
 bool Cell::touch_ECM()
 { 
@@ -539,9 +606,9 @@ bool Cell::necrotic_oxygen()
 	//std::cout << ox << " " << (cell_line->o2_necrotic) - ox << std::endl;
 	if ( ox >= 0 )	
 		return ( UniformRandom() * 0.005 < (cell_line->o2_necrotic - ox) );
-   return false;	
+	return false;
 }
-		
+
 /* Return value of adhesion strength with ECM according to integrin level */
 double Cell::integrinStrength()
 { 
@@ -561,7 +628,7 @@ void Cell::degrade_ecm( double dt )
 	// Check if there is ECM material in given voxel
 	int ecm_index = density_index("ecm");
 	int current_index = get_current_mechanics_voxel_index();
-	#pragma omp critical
+#pragma omp critical
 	{
 		double dens = microenvironment->nearest_density_vector(current_index)[ecm_index];
 		if ( dens > EPSILON )
@@ -577,7 +644,7 @@ void Cell::degrade_ecm( double dt )
 void Cell::set_3D_random_motility( double dt )
 {
 	double probability = UniformRandom();
-	
+
 	if ( probability < dt / cell_line->persistence )
 	{
 		Vector3d tmp;
@@ -602,6 +669,8 @@ void Cell::set_3D_polarized_motility( double dt )
 	motility *= cell_line->get_motility_amplitude(pmotility);
 }
 
+
+
 void Cell::output( std::string& delimeter, std::ofstream* file )
 {
 	(*file) << ID << delimeter << position[0] << delimeter << position[1] << delimeter << position[2] << delimeter;
@@ -614,7 +683,7 @@ void Cell::output( std::string& delimeter, std::ofstream* file )
 	cell_line->output( delimeter, file );
 	ccycle->output( delimeter, file );
 	//double angle = ( polarization.dir() * position.dir() );
-	//(*file) << angle;
+	(*file) << secretion_rates[density_index("chemokine")];
 	(*file) << std::endl;
 }	
 
@@ -628,14 +697,14 @@ void Cell::get_colors( std::vector<std::string>* cols, int mode )
 
 	switch ( mode )
 	{
-		case 0:
-			simple_cell_coloring( cols );
-			break;
-		case 1:
-			phase_cell_coloring( cols );
-			break;
-		default:
-			break;
+	case 0:
+		simple_cell_coloring( cols );
+		break;
+	case 1:
+		phase_cell_coloring( cols );
+		break;
+	default:
+		break;
 	}
 }
 
@@ -667,18 +736,18 @@ void Cell::phase_cell_coloring( std::vector<std::string>* cols )
 /* Draw the current cell in SVG file */
 void Cell::drawSVG( WriteSVG* svg, std::ostream* os, int zslice, std::vector<double> lims, bool plot_nuclei, int mode_color )
 {
-   // Has an intersection with the Z slice to draw	
+	// Has an intersection with the Z slice to draw
 	if( fabs( position[2] - zslice ) < volume.get_radius() )
 	{
 		double r = volume.get_radius() ; 
 		double rn = volume.get_nuclear_radius() ; 
-	    double z = fabs(position[2] - zslice) ; 
-   
+		double z = fabs(position[2] - zslice) ;
+
 		std::vector<std::string> colors(4);
 		get_colors( &colors, mode_color );
 
 		(*os) << "  <g id=\"cell" << ID << "\">" << std::endl; 
-  
+
 		// figure out how much of the cell intersects with z = 0 
 		double plot_radius = sqrt( r*r - z*z ); 
 		(*svg).add_circle( position[0]-lims[0], position[1]+lims[4]-lims[2], plot_radius, 0.5, colors[1], colors[0], 1 ); 

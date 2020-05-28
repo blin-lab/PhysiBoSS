@@ -7,7 +7,7 @@ CC := g++ -Wfatal-errors
 # CC := g++-5 # typical homebrew compiler name 
 
 #----------- Compilation mode (debug or release)
-MODE := R
+MODE := P
 # R = Release
 # D = Debug
 # P = Profiling

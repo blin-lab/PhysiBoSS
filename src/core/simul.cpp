@@ -286,7 +286,7 @@ void Simul::initEnvironment()
 	microenvironment.set_density(0, conc_names[0] , "mmHg" );
 	for ( int i = 1; i < ndensities; i++ )
 	{
-		microenvironment.add_density( conc_names[i] , "dimensionless" );
+		microenvironment.add_density( conc_names[i] , "dimensionless", 10, 0.0 );
 	}
 	std::cout << bounding_box << std::endl; 
 
@@ -323,12 +323,15 @@ void Simul::initEnvironment()
 	// register the diffusion solver 
 	microenvironment.diffusion_decay_solver = diffusion_decay_solver__constant_coefficients_LOD_3D; 
 
+
+
 	// register substrates properties 
 	for ( int k = 0; k < ndensities; k++ )
 	{
 		//microenvironment.diffusion_coefficients[k] = 300; // 300 microns^2 / min, for growth factors ~ 300, Fallahi-Sichani et al., 2010 & Nugent 1984
-		microenvironment.diffusion_coefficients[k] = 1200; // microns^2 / min, for TNF Cheong et al
-		microenvironment.decay_rates[k] = 0.0275;   // /min. Value for TNF, Cheong et al., 2006
+		//microenvironment.diffusion_coefficients[k] = 5000; // microns^2 / min, for TNF Cheong et al
+		reader.getDoubleValue("simulation", "dif_coef", &microenvironment.diffusion_coefficients[k]);
+		reader.getDoubleValue("simulation", "decay_rate", &microenvironment.decay_rates[k]);//0.0275;   // /min. Value for TNF, Cheong et al., 2006
 	}	
 	if ( microenvironment.get_index("oxygen") >= 0 )
 	{
